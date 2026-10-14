@@ -52,12 +52,18 @@ Android release 配置从环境变量读取：
 pwsh -File tools/build-release.ps1 -JavaHome '<JDK 21 路径>'
 ```
 
-结果位于 `artifacts/release/1.0.2`：Android 1.0.0 签名 APK、Windows 1.0.2 自带运行时 ZIP、
+结果位于 `artifacts/release/1.0.3`：Android 1.0.1 签名 APK、Windows 1.0.3 自带运行时 ZIP、
 源码 ZIP、中文说明及 `SHA256SUMS.txt`。Windows 发布使用新目录，避免旧文件混入。
 Windows EXE 尚无商业代码签名证书。
 
+Windows 1.0.3 使用标准自包含发布，不启用 ReadyToRun。本机构建的 crossgen2 曾两次异常退出；
+标准发布成功，交付仍包含 .NET Core 和 WPF 运行时，无需另外安装 .NET。
+
 `tools/build-release.ps1` 的 `-Version` 与 `-AndroidVersion` 分别指定 Windows/
-源码版号和 APK 版号，默认 1.0.2 / 1.0.0。本次更新增加已完成文件双击打开，并保留连接修复。
+源码版号和 APK 版号，默认 1.0.3 / 1.0.1。本次 Windows 增加传输记录右键菜单，Android 保持 1.0.1。
+单独更新手机可运行 `android/build-release.ps1`，APK 生成于
+`android/app/build/outputs/apk/release/app-release.apk`，无需重新构建 Windows。
+本次独立交付位于 `artifacts/release/android-1.0.1`。
 
 打包入口还会运行 `tools/check_release.py`：检查 SHA-256、ZIP CRC、源码与运行时
 完整性、私钥排除、正式程序无测试进程，再将 Windows 包解压至临时目录，直接

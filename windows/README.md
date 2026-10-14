@@ -1,6 +1,6 @@
 # zhanhBlueB Windows 端
 
-Windows 11 x64，.NET 10 + WPF。Windows 1.0.2 正式发布包 `artifacts/release/1.0.2/zhanhBlueB-Windows-1.0.2-win-x64.zip` 自带运行时，完整解压后运行 `zhanhBlueB.exe`，无需安装 .NET。首次运行 Windows 可能提示未签名发布者；本项目没有商业代码签名证书。
+Windows 11 x64，.NET 10 + WPF。Windows 1.0.3 正式发布包 `artifacts/release/1.0.3/zhanhBlueB-Windows-1.0.3-win-x64.zip` 自带运行时，完整解压后运行 `zhanhBlueB.exe`，无需安装 .NET。首次运行 Windows 可能提示未签名发布者；本项目没有商业代码签名证书。
 
 ## 使用
 
@@ -11,6 +11,7 @@ Windows 11 x64，.NET 10 + WPF。Windows 1.0.2 正式发布包 `artifacts/releas
 5. 用「选择文件发送」多选文件，或直接拖文件进窗口。行内显示进度，可取消和显式重试。文件夹暂不支持。
 6. 手机发来的文字/图片直接写入电脑剪贴板；文件及接收的 PNG 保存到系统下载目录 `zhanhBlueB` 子目录。同名加 `(1)`、`(2)`，不覆盖已有文件。图片还提供「图片另存为」。
 7. 双击已完成的图片或文件记录，可使用 Windows 默认应用打开。电脑剪贴板图片发送成功后也会在下载目录保存一份 PNG 副本，便于从该记录再次打开。
+8. 在记录上右键可选择“打开”“删除记录”或“删除记录与本地文件”。后者默认选中“取消”，确认后只将电脑上的本地路径移入回收站；发送记录会明确提示这是发送时选择的原文件，手机副本不受影响。文件占用、权限不足、路径正在传输或回收失败时保留记录，不执行永久删除。
 
 关闭窗口会隐藏到系统托盘。托盘菜单「退出」停止监听并结束进程。「停止连接」立即停止监听。开机启动默认关闭；勾选后只注册当前用户的启动项。清除信任只影响后续应用确认；系统配对需在 Windows 设置中单独解除。
 
@@ -22,7 +23,7 @@ Windows 11 x64，.NET 10 + WPF。Windows 1.0.2 正式发布包 `artifacts/releas
 dotnet test BlueBridge.Core.Tests/BlueBridge.Core.Tests.csproj -c Release --collect:"XPlat Code Coverage" --results-directory validation/test-results
 dotnet test BlueBridge.Bluetooth.Tests/BlueBridge.Bluetooth.Tests.csproj -c Release --logger "trx;LogFileName=bluetooth-green.trx" --results-directory validation/bluetooth-1.0.1
 dotnet build BlueBridge.HeadlessPeer/BlueBridge.HeadlessPeer.csproj -c Release
-dotnet publish BlueBridge.Desktop/BlueBridge.Desktop.csproj -c Release -r win-x64 --self-contained true -p:PublishReadyToRun=true -o publish
+dotnet publish BlueBridge.Desktop/BlueBridge.Desktop.csproj -c Release -r win-x64 --self-contained true -o publish
 dotnet BlueBridge.Desktop/bin/Release/net10.0-windows/zhanhBlueB.dll --bluetooth-smoke
 ```
 

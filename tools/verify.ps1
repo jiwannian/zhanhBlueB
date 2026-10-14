@@ -22,9 +22,13 @@ try {
     [xml]$desktopCoverage = Get-Content -LiteralPath $desktopCoverageFile.FullName -Raw
     $desktopLineRate = [double]::Parse($desktopCoverage.coverage.'line-rate', [Globalization.CultureInfo]::InvariantCulture)
     if ($desktopLineRate -lt 0.80) { throw "Windows 文件打开逻辑行覆盖率低于80%：$desktopLineRate" }
+    foreach ($class in $desktopCoverage.coverage.packages.package.classes.class | Where-Object { $_.name -match 'BlueBridge\.Desktop\.(TransferRecordActions|TransferRow)' }) {
+        $rate = [double]::Parse($class.'line-rate', [Globalization.CultureInfo]::InvariantCulture)
+        if ($rate -lt 0.80) { throw "Windows 本地文件操作行覆盖率低于80%：$($class.name) $rate" }
+    }
     Invoke-Checked 'dotnet' @('build', 'windows/BlueBridge.HeadlessPeer/BlueBridge.HeadlessPeer.csproj', '-c', 'Release')
     Push-Location (Join-Path $projectRoot 'android')
-    try { Invoke-Checked '.\gradlew.bat' @(':core:test', ':core:jacocoTestCoverageVerification', ':core:installDist', ':app:testDebugUnitTest') }
+    try { Invoke-Checked '.\gradlew.bat' @(':core:test', ':core:jacocoTestCoverageVerification', ':core:installDist', ':app:testDebugUnitTest', ':app:receivedUiCoverageVerification') }
     finally { Pop-Location }
     $configuration = Join-Path $projectRoot 'artifacts\peer-commands.json'
     $peerCommands = @{

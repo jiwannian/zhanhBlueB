@@ -15,4 +15,15 @@ distributions { main { contents { from(headlessJar) { into("lib") } } } }
 jacoco { toolVersion = "0.8.13" }
 tasks.test { systemProperty("goldenPath", rootProject.file("../protocol/golden.json").absolutePath); finalizedBy(tasks.jacocoTestReport) }
 tasks.jacocoTestReport { dependsOn(tasks.test); reports { xml.required.set(true); html.required.set(true) }; classDirectories.setFrom(files(classDirectories.files.map { fileTree(it) { exclude("**/HeadlessPeer*", "**/TransferSource*", "**/SessionListener*") } })) }
-tasks.jacocoTestCoverageVerification { dependsOn(tasks.jacocoTestReport); classDirectories.setFrom(tasks.jacocoTestReport.get().classDirectories); violationRules { rule { limit { counter = "LINE"; minimum = "0.80".toBigDecimal() } } } }
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.jacocoTestReport)
+    classDirectories.setFrom(tasks.jacocoTestReport.get().classDirectories)
+    violationRules {
+        rule { limit { counter = "LINE"; minimum = "0.80".toBigDecimal() } }
+        rule {
+            element = "CLASS"
+            includes = listOf("com.zhanh.bluebridge.core.Received*", "com.zhanh.bluebridge.core.FileOpenPolicy")
+            limit { counter = "LINE"; minimum = "0.80".toBigDecimal() }
+        }
+    }
+}

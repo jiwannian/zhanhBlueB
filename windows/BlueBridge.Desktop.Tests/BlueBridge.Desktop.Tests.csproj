@@ -6,5 +6,7 @@
     <Compile Include="../BlueBridge.Desktop/TransferRow.cs" Link="Production/TransferRow.cs"/>
     <Compile Include="../BlueBridge.Desktop/TransferFileOpener.cs" Link="Production/TransferFileOpener.cs"/>
     <Compile Include="../BlueBridge.Desktop/ClipboardImageStore.cs" Link="Production/ClipboardImageStore.cs"/>
+    <Compile Include="../BlueBridge.Desktop/TransferRecordActions.cs" Link="Production/TransferRecordActions.cs"/>
+    <Compile Include="../BlueBridge.Desktop/ILocalFileRecycler.cs" Link="Production/ILocalFileRecycler.cs"/>
   </ItemGroup>
 </Project>

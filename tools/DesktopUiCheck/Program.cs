@@ -40,6 +40,8 @@ internal static class Program
             Capture(surface, (int)view.MinWidth, (int)view.MinHeight, Path.Combine(output, "windows-minimum.png"));
             Require(element.ActualWidth > 0 && element.ActualHeight > 0, "Layout did not render");
             FileOpenChecks.Run(view, surface, launches);
+            RecordMenuChecks.Run();
+            if (args.Contains("--recycle-smoke")) RecycleBinChecks.Run();
             Console.WriteLine("PASS: actual WPF view/actions/default image state and standard/minimum layouts");
             Console.WriteLine("Screenshots: " + output);
             return 0;

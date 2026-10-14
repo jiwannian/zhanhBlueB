@@ -21,6 +21,8 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+data class SavedDownload(val uri: Uri, val name: String, val mime: String)
+
 object AndroidFiles {
     fun stage(context: Context, uri: Uri, image: Boolean, shouldContinue: () -> Boolean = { true }): Pair<TransferInfo, File> {
         ContentUriPolicy.requireContent(uri.scheme)
@@ -75,7 +77,7 @@ object AndroidFiles {
         if (!shouldApply()) throw IOException("连接已停止，文字未应用")
         (context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText(Product.NAME, value))
     }
-    fun saveDownloads(context: Context, file: File, name: String, mime: String): Uri = synchronized(this) {
+    fun saveDownloads(context: Context, file: File, name: String, mime: String): SavedDownload = synchronized(this) {
         TransferInfo(name, file.length(), "file", mime).validate()
         val resolver = context.contentResolver
         val used = mutableSetOf<String>()
@@ -87,8 +89,12 @@ object AndroidFiles {
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw IOException("无法创建下载文件")
         try {
             resolver.openOutputStream(uri, "w")?.use { output -> file.inputStream().use { it.copyTo(output, Wire.CHUNK_SIZE) } } ?: throw IOException("无法写入下载目录")
+            val saved = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME, MediaStore.MediaColumns.MIME_TYPE), null, null, null)?.use { cursor ->
+                if (!cursor.moveToFirst()) throw IOException("无法读取保存后的文件信息")
+                SavedDownload(uri, cursor.getString(0) ?: unique, cursor.getString(1)?.takeIf { it.isNotBlank() } ?: mime)
+            } ?: throw IOException("无法读取保存后的文件信息")
             if (resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) != 1) throw IOException("无法完成文件保存")
-            return uri
+            return saved
         } catch (e: Exception) { resolver.delete(uri, null, null); throw e }
     }
     fun safeName(name: String): String {

@@ -45,6 +45,7 @@ class BridgeService : Service() {
     }
     override fun onCreate() {
         super.onCreate(); BridgeRuntime.service = this
+        scope.launch { AndroidReceivedFiles.load(this@BridgeService) }
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel(CHANNEL, "${Product.NAME} 蓝牙连接", NotificationManager.IMPORTANCE_LOW))
         File(cacheDir, "incoming").apply { mkdirs(); listFiles()?.forEach { it.delete() } }
         if (!BridgeRuntime.cacheInitialized) {
@@ -124,8 +125,15 @@ class BridgeService : Service() {
                             BridgeRuntime.update { it.copy(lastImage = uri.toString(), notice = "图片已写入剪贴板，可粘贴或另存到下载目录。") }
                             BridgeRuntime.finish(id, "已写入剪贴板")
                         } else {
-                            AndroidFiles.saveDownloads(this@BridgeService, file, info.name, info.mime)
-                            BridgeRuntime.finish(id, "已保存到下载/${Product.NAME}")
+                            val saved = AndroidFiles.saveDownloads(this@BridgeService, file, info.name, info.mime)
+                            val record = ReceivedFileRecord(id, saved.uri.toString(), saved.name, saved.mime, info.length, System.currentTimeMillis())
+                            BridgeRuntime.finish(id, RECEIVED_FILE_STATUS, receivedFile = record)
+                            // History is supplementary: never turn an already saved file into a failed transfer.
+                            try { AndroidReceivedFiles.record(this@BridgeService, record) }
+                            catch (e: Exception) {
+                                android.util.Log.w("ReceivedFiles", "Cannot record received file", e)
+                                BridgeRuntime.message("文件已接收，但记录保存失败；重启后可能找不到这条记录。")
+                            }
                         }
                     }
                     override fun progress(id: UUID, name: String, bytes: Long, total: Long, incoming: Boolean) { if (generation == token) BridgeRuntime.progress(id, name, bytes, total, incoming) }

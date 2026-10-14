@@ -15,6 +15,7 @@ public sealed class SessionCallbacks
     public Action<TransferProgress> Progress { get; init; } = _ => { };
     public Action<string> Status { get; init; } = _ => { };
     public Action<Guid, string> TransferFailed { get; init; } = (_, _) => { };
+    public Action<Guid> ReceiveSettled { get; init; } = _ => { };
 }
 public sealed class BridgeSession : IAsyncDisposable
 {
@@ -118,6 +119,7 @@ public sealed class BridgeSession : IAsyncDisposable
     {
         await incomingGate.WaitAsync(lifetime.Token);
         var previous = incoming;
+        bool settled = false;
         try
         {
             if (canceled.Contains(frame.Id)) return;
@@ -138,6 +140,7 @@ public sealed class BridgeSession : IAsyncDisposable
                     try { await callbacks.ReceiveItem(item); }
                     catch (Exception) when (item.Metadata.Kind == "image") { File.Delete(item.Path); throw new ProtocolException("图片解码或剪贴板写入失败"); }
                     await incoming.DisposeAsync(); incoming = null;
+                    settled = true;
                     Remember(completed, completedOrder, frame.Id);
                     await SendControlAsync(FrameType.Ack, frame.Id, new AckMessage("complete")); break;
                 default: throw new ProtocolException("意外的传输消息");
@@ -148,13 +151,13 @@ public sealed class BridgeSession : IAsyncDisposable
             bool preserveActive = frame.Type == FrameType.Begin && previous is not null && ReferenceEquals(incoming, previous);
             if (!preserveActive)
             {
-                if (incoming?.Id == frame.Id) { await incoming.DisposeAsync(); incoming = null; }
+                if (incoming?.Id == frame.Id) { await incoming.DisposeAsync(); incoming = null; settled = true; }
                 Remember(canceled, canceledOrder, frame.Id);
             }
             string reason = error is ProtocolException ? error.Message : "无法接收文件，请检查磁盘空间和保存目录权限";
             callbacks.TransferFailed(frame.Id, reason); await SendErrorAsync(frame.Id, reason);
         }
-        finally { incomingGate.Release(); }
+        finally { incomingGate.Release(); if (settled) callbacks.ReceiveSettled(frame.Id); }
     }
     private void RequireIncoming(Guid id) { if (incoming is null || incoming.Id != id) throw new ProtocolException("文件块或结束消息没有匹配的 BEGIN"); }
     private async Task HandleCancelAsync(Guid id, string reason)
@@ -162,9 +165,11 @@ public sealed class BridgeSession : IAsyncDisposable
         var current = outgoing;
         if (current?.Id == id) current.Fail(new IOException(reason));
         await incomingGate.WaitAsync();
-        try { Remember(canceled, canceledOrder, id); if (incoming?.Id == id) { await incoming.DisposeAsync(); incoming = null; } }
+        bool settled = false;
+        try { Remember(canceled, canceledOrder, id); if (incoming?.Id == id) { await incoming.DisposeAsync(); incoming = null; settled = true; } }
         finally { incomingGate.Release(); }
         callbacks.TransferFailed(id, reason);
+        if (settled) callbacks.ReceiveSettled(id);
     }
     public async Task CancelAsync(Guid id)
     {
@@ -237,8 +242,9 @@ public sealed class BridgeSession : IAsyncDisposable
     private async Task ClearIncomingAsync()
     {
         await incomingGate.WaitAsync();
-        try { if (incoming is not null) { await incoming.DisposeAsync(); incoming = null; } }
-        finally { incomingGate.Release(); }
+        Guid? settled = null;
+        try { if (incoming is not null) { Guid id = incoming.Id; await incoming.DisposeAsync(); incoming = null; settled = id; } }
+        finally { incomingGate.Release(); if (settled is { } id) callbacks.ReceiveSettled(id); }
     }
     public async ValueTask DisposeAsync()
     {

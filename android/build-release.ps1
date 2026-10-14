@@ -13,6 +13,6 @@ if (!$env:BLUEBRIDGE_KEYSTORE -or !$env:BLUEBRIDGE_STORE_PASSWORD -or !$env:BLUE
 }
 Push-Location $PSScriptRoot
 try {
-    & '.\gradlew.bat' :core:test :core:jacocoTestCoverageVerification :app:testDebugUnitTest :app:assembleRelease :app:lintDebug
+    & '.\gradlew.bat' :core:test :core:jacocoTestCoverageVerification :app:testDebugUnitTest :app:receivedUiCoverageVerification :app:assembleRelease :app:lintDebug
     if ($LASTEXITCODE -ne 0) { throw 'zhanhBlueB Android 构建或检查失败。' }
 } finally { Pop-Location }

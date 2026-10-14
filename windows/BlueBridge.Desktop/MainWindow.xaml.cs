@@ -33,9 +33,12 @@ public partial class MainWindow : Window
     private bool initialized, listening, exiting;
     private int imageQueued;
     private string? lastImage;
-    public MainWindow(bool startHost = true, Action<ProcessStartInfo>? fileLauncher = null, string? downloadDirectory = null)
+    public MainWindow(bool startHost = true, Action<ProcessStartInfo>? fileLauncher = null, string? downloadDirectory = null,
+        ILocalFileRecycler? fileRecycler = null, Func<TransferRow, string, bool>? confirmRecycle = null)
     {
         this.fileLauncher = fileLauncher ?? (info => Process.Start(info));
+        this.confirmRecycle = confirmRecycle ?? ConfirmRecycle;
+        recordActions = new(Transfers, fileRecycler ?? new WindowsFileRecycler(), ReleaseRecord, LocalFileRemoved);
         InitializeComponent(); DataContext = this;
         destination = downloadDirectory ?? DownloadFolder.PathValue; DownloadFolder.Prepare(destination);
         DestinationText.Text = "保存位置：" + destination;
@@ -62,6 +65,7 @@ public partial class MainWindow : Window
         ReceiveText = (_, text) => ApplyClipboardAsync(() => { if (text.Length == 0) System.Windows.Clipboard.Clear(); else System.Windows.Clipboard.SetText(text); echo.MarkApplied(ClipboardMonitor.Sequence); SetActivity("已接收文字并写入剪贴板"); }),
         ReceiveItem = ReceiveItemAsync,
         Progress = progress => Dispatcher.BeginInvoke(() => UpdateProgress(progress)),
+        ReceiveSettled = id => Dispatcher.BeginInvoke(() => UpdateRow(id, row => row with { JobPending = false })),
         Status = SetConnection,
         TransferFailed = (id, reason) => Dispatcher.BeginInvoke(() => { UpdateRow(id, row => row with { State = "失败，可重试" }); SetActivity(reason); })
     };
@@ -143,9 +147,10 @@ public partial class MainWindow : Window
     }
     private bool Enqueue(TransferJob job)
     {
+        if (recordActions.IsPathRecycling(job.Path)) { SetActivity("此文件正在移入回收站，请稍后再发送"); return false; }
         cancellations[job.Id] = new();
         long length = job.Bytes?.LongLength ?? new FileInfo(job.Path!).Length;
-        Transfers.Insert(0, new(job.Id, job.Name, "电脑 → 手机", "等待发送", 0, length, job.Path));
+        Transfers.Insert(0, new(job.Id, job.Name, "电脑 → 手机", "等待发送", 0, length, job.Path, JobPending: true));
         if (!queue.Writer.TryWrite(job)) { cancellations.TryRemove(job.Id, out var cancel); cancel?.Dispose(); Transfers.RemoveAt(FindRow(job.Id)); SetActivity("传输队列已满，请等待完成后重试"); return false; }
         TrimRows(); return true;
     }
@@ -168,7 +173,12 @@ public partial class MainWindow : Window
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException or TimeoutException)
                 { await Dispatcher.InvokeAsync(() => { if (job.Bytes is not null && ReferenceEquals(host.Session, job.Session) && job.Session.IsReady) CacheRetryImage(job.Id, job.Bytes); UpdateRow(job.Id, x => x with { State = cancel.IsCancellationRequested ? "已取消" : "失败，可重试", ImageRetry = retryImages.ContainsKey(job.Id) }); SetActivity(cancel.IsCancellationRequested ? "传输已取消" : "文件发送失败：" + e.Message); }); }
-                finally { cancellations.TryRemove(job.Id, out _); cancel.Dispose(); if (job.Bytes is not null) Interlocked.Exchange(ref imageQueued, 0); }
+                finally
+                {
+                    cancellations.TryRemove(job.Id, out _); cancel.Dispose();
+                    if (job.Bytes is not null) Interlocked.Exchange(ref imageQueued, 0);
+                    await Dispatcher.InvokeAsync(() => UpdateRow(job.Id, row => row with { JobPending = false }));
+                }
             }
         }
         catch (OperationCanceledException) { }
@@ -191,24 +201,27 @@ public partial class MainWindow : Window
     }
     private void UpdateProgress(TransferProgress progress)
     {
+        if (recordActions.IsRemoved(progress.Id)) return;
         int index = FindRow(progress.Id);
-        if (index < 0) { Transfers.Insert(0, new(progress.Id, progress.Name, "手机 → 电脑", "正在接收", progress.Bytes, progress.Total)); TrimRows(); }
+        if (index < 0) { Transfers.Insert(0, new(progress.Id, progress.Name, "手机 → 电脑", "正在接收", progress.Bytes, progress.Total, JobPending: true)); TrimRows(); }
         else Transfers[index] = Transfers[index] with { Bytes = progress.Bytes, Total = progress.Total };
     }
     private int FindRow(Guid id) { for (int i = 0; i < Transfers.Count; i++) if (Transfers[i].Id == id) return i; return -1; }
     private void UpdateRow(Guid id, Func<TransferRow, TransferRow> change) { int index = FindRow(id); if (index >= 0) Transfers[index] = change(Transfers[index]); }
-    private void TrimRows() { while (Transfers.Count > 150) { int index = Transfers.Count - 1; if (Transfers[index].CanCancel) break; Transfers.RemoveAt(index); } }
+    private void TrimRows() { while (Transfers.Count > 150) { var row = Transfers[^1]; if (row.IsBusy) break; recordActions.Remove(row.Id); } }
     private async void CancelTransferClick(object sender, RoutedEventArgs args)
     {
         Guid id = (Guid)((System.Windows.Controls.Button)sender).Tag;
-        if (cancellations.TryGetValue(id, out var cancel)) cancel.Cancel();
+        bool outgoingJob = cancellations.TryGetValue(id, out var cancel);
+        if (outgoingJob) { UpdateRow(id, row => row with { JobPending = true }); cancel!.Cancel(); }
         try { if (host.Session is { } session) await session.CancelAsync(id); UpdateRow(id, x => x with { State = "已取消" }); }
         catch (Exception e) when (e is IOException or OperationCanceledException) { SetActivity("连接已断开"); }
+        finally { if (outgoingJob && !cancellations.ContainsKey(id)) UpdateRow(id, row => row with { JobPending = false }); }
     }
     private void RetryTransferClick(object sender, RoutedEventArgs args)
     {
         Guid id = (Guid)((System.Windows.Controls.Button)sender).Tag; int index = FindRow(id);
-        if (index < 0) return;
+        if (index < 0 || !Transfers[index].CanRetry) return;
         if (Transfers[index].Source is { } path) AddFiles([path]);
         else if (retryImages.TryGetValue(id, out var bytes) && host.Session is { IsReady: true } session)
         {
@@ -235,9 +248,7 @@ public partial class MainWindow : Window
         if (args.ChangedButton != System.Windows.Input.MouseButton.Left ||
             sender is not System.Windows.Controls.ListBoxItem { DataContext: TransferRow row }) return;
         if (FindAncestor<System.Windows.Controls.Primitives.ButtonBase>(args.OriginalSource as DependencyObject) is not null) return;
-        string? error = TransferFileOpener.Open(row, fileLauncher);
-        if (error is not null) SetActivity(error);
-        else SetActivity("已打开：" + row.Name);
+        OpenRecord(row.Id);
         args.Handled = true;
     }
     private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject

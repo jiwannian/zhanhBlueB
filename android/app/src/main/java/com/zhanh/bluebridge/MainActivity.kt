@@ -29,9 +29,12 @@ import androidx.core.net.toUri
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import com.zhanh.bluebridge.core.ContentUriPolicy
+import com.zhanh.bluebridge.core.ReceivedFileRecord
+import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val devices = mutableStateOf<List<Computer>>(emptyList())
@@ -39,6 +42,8 @@ class MainActivity : ComponentActivity() {
     private var pendingConnect = false
     private var pendingShare: Intent? = null
     private var shareHandled = false
+    private var openingFile by mutableStateOf<UUID?>(null)
+    private val openFileLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { openingFile = null }
     private val permissionRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         refreshDevices()
         if (pendingConnect) { pendingConnect = false; if (BluetoothPermissions.canConnect(this)) connectSelected() else BridgeRuntime.message("蓝牙权限未获允许，可再次点击刷新设备或在应用设置中开启。") }
@@ -52,15 +57,17 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch(Dispatchers.IO) { AndroidReceivedFiles.load(this@MainActivity) }
         shareHandled = savedInstanceState?.getBoolean("shareHandled") ?: false
         if (!shareHandled && (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE)) pendingShare = intent
         setContent {
             BlueBridgeTheme {
                 val state by BridgeRuntime.ui.collectAsState()
+                val receivedFiles by AndroidReceivedFiles.files.collectAsState()
                 LaunchedEffect(state.connected) { if (state.connected) dispatchShare() }
-                BridgeScreen(state, devices.value, selected.value, { selected.value = it }, { refreshOrRequest() }, { connectSelected() },
+                BridgeScreen(state.copy(transfers = displayTransfers(state.transfers, receivedFiles)), devices.value, selected.value, { selected.value = it }, { refreshOrRequest() }, { connectSelected() },
                     { BridgeRuntime.service?.stopConnection() }, { sendClipboard(this) }, { documentPicker.launch(arrayOf("*/*")) },
-                    { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, { saveImage() })
+                    { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }, { saveImage() }, openingFile, { openReceivedFile(it) })
             }
         }
         refreshDevices()
@@ -106,6 +113,27 @@ class MainActivity : ComponentActivity() {
                 finally { file.delete() }
                 BridgeRuntime.message("图片已保存到下载/${Product.NAME}")
             } catch (e: Exception) { BridgeRuntime.message(e.message ?: "保存图片失败") }
+        }
+    }
+    private fun openReceivedFile(file: ReceivedFileRecord) {
+        if (openingFile != null) return
+        openingFile = file.id
+        lifecycleScope.launch {
+            try {
+                val chooser = withContext(Dispatchers.IO) { AndroidFileOpener.prepare(this@MainActivity, file) }
+                openFileLauncher.launch(chooser)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                openingFile = null
+                throw e
+            } catch (e: Exception) {
+                openingFile = null
+                android.util.Log.w("ReceivedFiles", "Cannot open received file", e)
+                BridgeRuntime.message(when (e) {
+                    is android.content.ActivityNotFoundException -> "未找到可打开此文件的应用。"
+                    is SecurityException -> "无法读取此文件，读取权限可能已失效。"
+                    else -> e.message ?: "无法打开文件，请检查文件是否仍存在。"
+                })
+            }
         }
     }
     @Suppress("DEPRECATION")
@@ -154,7 +182,8 @@ fun BlueBridgeTheme(content: @Composable () -> Unit) {
 @Composable
 private fun BridgeScreen(
     state: BridgeUiState, devices: List<Computer>, selected: String?, choose: (String) -> Unit,
-    refresh: () -> Unit, connect: () -> Unit, disconnect: () -> Unit, clipboard: () -> Unit, files: () -> Unit, settings: () -> Unit, saveImage: () -> Unit
+    refresh: () -> Unit, connect: () -> Unit, disconnect: () -> Unit, clipboard: () -> Unit, files: () -> Unit, settings: () -> Unit, saveImage: () -> Unit,
+    openingFile: UUID?, openFile: (ReceivedFileRecord) -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         LazyColumn(contentPadding = PaddingValues(horizontal = 22.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.safeDrawingPadding()) {
@@ -212,10 +241,11 @@ private fun BridgeScreen(
                         Text(if (row.status in listOf("接收中", "发送中")) "${formatSize(row.bytes)} / ${formatSize(row.total)}" else row.status, fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary, modifier = Modifier.weight(1f))
                         if (row.status in listOf("接收中", "发送中", "排队中")) TextButton(onClick = { BridgeRuntime.service?.cancel(row.id) }) { Text("取消") }
                         if (row.retryable) TextButton(onClick = { BridgeRuntime.service?.retry(row.id) }) { Text("重试") }
+                        ReceivedFileOpenButton(row, openingFile, openFile)
                     }
                 }
             }
-            item { Text("接收的文件保存于 下载 / ${Product.NAME}\n仅使用蓝牙 · 无需网络和账号", fontSize = 12.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.secondary) }
+            item { Text("接收的文件保存于 下载 / ${Product.NAME}\n最近 100 条接收文件记录可点“打开”，选择其他应用查看\n仅使用蓝牙 · 无需网络和账号", fontSize = 12.sp, lineHeight = 19.sp, color = MaterialTheme.colorScheme.secondary) }
         }
         state.trust?.let { prompt ->
             AlertDialog(onDismissRequest = { }, title = { Text("信任这台电脑？") },

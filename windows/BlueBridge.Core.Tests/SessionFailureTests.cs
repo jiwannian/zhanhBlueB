@@ -13,18 +13,21 @@ public sealed class SessionFailureTests : IDisposable
     public async Task DuplicateActiveBeginPreservesOriginalTransfer()
     {
         var (server, peer) = TestStream.Pair();
-        await using var session = new BridgeSession(server, Peer, directory, new() { ApprovePeer = _ => Task.FromResult(true) });
+        var settled = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var session = new BridgeSession(server, Peer, directory, new() { ApprovePeer = _ => Task.FromResult(true), ReceiveSettled = id => settled.SetResult(id) });
         Task run = session.RunAsync(); await Handshake(peer, session);
         Guid id = Guid.NewGuid();
         await WriteJson(peer, FrameType.Begin, id, new TransferMetadata("original.bin", 3, "file", "application/octet-stream"));
         Assert.Equal(FrameType.Ack, (await FrameCodec.ReadAsync(peer))!.Type);
         await WriteJson(peer, FrameType.Begin, id, new TransferMetadata("replacement.bin", 3, "file", "application/octet-stream"));
         Assert.Equal(FrameType.Error, (await FrameCodec.ReadAsync(peer))!.Type);
+        Assert.False(settled.Task.IsCompleted);
         await Write(peer, FrameType.Chunk, id, [1, 2, 3]);
         await WriteJson(peer, FrameType.End, id, new EndMessage(Convert.ToHexString(SHA256.HashData(new byte[] { 1, 2, 3 })).ToLowerInvariant()));
         Assert.Equal(FrameType.Ack, (await FrameCodec.ReadAsync(peer))!.Type);
         Assert.Equal(new byte[] { 1, 2, 3 }, File.ReadAllBytes(Path.Combine(directory, "original.bin")));
         Assert.False(File.Exists(Path.Combine(directory, "replacement.bin")));
+        Assert.Equal(id, await settled.Task.WaitAsync(TimeSpan.FromSeconds(3)));
         await peer.DisposeAsync(); await run;
     }
     [Theory]
